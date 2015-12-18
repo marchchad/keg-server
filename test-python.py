@@ -53,8 +53,8 @@ while True:
         pouring = False
         if (pintsPoured > 0.1):
             pourTime = int((currentTime - pourStart) / 1000) - 3
-	    print 'liters poured ', litersPoured
-	    print litersPoured * 1000, ' ml poured'
+            print 'liters poured ', litersPoured
+            print litersPoured * 1000, ' ml poured'
             #print 'pints poured ', pintsPoured
             print 'pour time ', pourTime, ' seconds'
             #print 'oz/min ', (pintsPoured * 16) / (pourTime / 60)
