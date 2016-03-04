@@ -32,9 +32,9 @@ class FlowMeter():
         self.litersPoured = 0
         self.ouncesPoured = 0
 
-        # TODO: make an account for the pi
-        self.user = 'marchchad'
-        self.password = 'Eclipse6!'
+        # TODO: move values to a config that is excluded from repo 
+        self.user = 'pi'
+        self.password = 'raspberry'
 
         if local:
             # local debugging
