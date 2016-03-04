@@ -9,10 +9,9 @@ import requests
 import json
 from socketIO_client import SocketIO, LoggingNamespace 	# To stream pouring data to the client page
 
-DEBUG = True # When True, displays print messages and logging output
 LOCAL = True # When False, flow meter will hook up to Live site for api authentication, data posting, and web socket streaming
 
-# TODO: migrate to standalone file to be imported
+
 class FlowMeter():
 
     def __init__(self, kegId, pin, local=True):
@@ -31,6 +30,9 @@ class FlowMeter():
         self.flow = 0
         self.litersPoured = 0
         self.ouncesPoured = 0
+
+        self.convFactor = (7.5 * 60)
+        self.scaleFactor = 1000.0000
 
         # TODO: move values to a config that is excluded from repo 
         self.user = 'pi'
@@ -56,13 +58,11 @@ class FlowMeter():
         Gets a JSON Web Token used to authenticate our POSTs to the API
         # TODO: reauthorize every 24 hours at 3 A.M. since the auth token only lasts that long
         """
-        if DEBUG:
-            print self.AuthenticationUrl
+        logging.info("\n\tauth url: %s" % self.AuthenticationUrl)
         response = requests.post(self.AuthenticationUrl, data={'username': self.user, 'password': self.password })
         data = json.loads(response.text)
         if data['success'] is True:
-            if DEBUG:
-                print "Successfully generated token!"
+            logging.info("\n\tSuccessfully generated token!")
             return data['token']
         else:
             raise "Unauthorized! Please check the username and password."
@@ -73,11 +73,9 @@ class FlowMeter():
 
         :rtype: Socket connection
         """
-        if DEBUG:
-            print "Getting socket connection..."
-            # only log if we're running against the local instance
-            logging.getLogger('requests').setLevel(logging.WARNING)
-            logging.basicConfig(level=logging.DEBUG)
+        logging.info("\n\tGetting socket connection...")
+        # only log if we're running against the local instance
+        logging.getLogger('requests').setLevel(logging.WARNING)
 
         socket = SocketIO(self.targetHost, self.targetWsPort, LoggingNamespace)
         return socket
@@ -89,11 +87,9 @@ class FlowMeter():
         :param pourData: Object containing the keg id, volume, and pour duration
         """
         try:
-            if DEBUG:
-                print "Emitting data..."
+            logging.info("\n\tEmitting data...")
             self.socketIO.emit('emitTotalPourData', pourData)
-            if DEBUG:
-                print "Done emitting data..."
+            logging.info("\n\tDone emitting data...")
             # save latest pour
             if len(self.lastFivePours) == 5:
                 del self.lastFivePours[-1]
@@ -109,8 +105,7 @@ class FlowMeter():
 
         :param pourData: Object containing the keg id, volume, and pour duration
         """
-        if DEBUG:
-            print self.PostPourUrl
+        logging.info("\n\tposturl: %s" % self.PostPourUrl)
 
         # Must mixin the auth token in order to post the data
         pourData['token'] = self.token
@@ -121,17 +116,16 @@ class FlowMeter():
         # No need to keep the latest pour if it posted successfully
         if data['success'] == True:
             if data['message']:
-                print data['message']
+                logging.info("\n\t%s" % data['message'])
             else:
-                if DEBUG:
-                    print "Successfully posted pour data!"
+                logging.info("\n\tSuccessfully posted pour data!")
             del self.lastFivePours[-1]
         else:
             if data['message']:
-                print "The post was not successful."
-                print data['message']
+                logging.warning("\n\tThe post was not successful.")
+                logging.warning("\n\t%s" % data['message'])
             else:
-                print "Something went wrong."
+                logging.error("\n\tSomething went wrong.")
             #TODO: log pour data to local database
             pass
 
@@ -155,6 +149,9 @@ class FlowMeter():
         """
         Sets up the web socket connection, the raspberry pi board and pins, and starts the `main` method
         """
+        logging.basicConfig(level=logging.WARNING)
+        logging.info("\n\n\n") # pad the log a bit so we can see where the program restarted
+
         self.token = self.GetToken()
         # set up connection
         self.socketIO = self.GetSocketConnection()
@@ -164,8 +161,7 @@ class FlowMeter():
         gpio.setmode(gpio.BCM) # Use real physical gpio port numbering
         gpio.setup(self.pin, gpio.IN, pull_up_down = gpio.PUD_UP)
 
-        if DEBUG:
-            print "we're ready to pour!"
+        logging.info("\n\twe're ready to pour!")
         # start up main loop
         self.main()
 
@@ -198,9 +194,14 @@ class FlowMeter():
 
                 if self.pinDelta > 0 and self.pinDelta < 1000:
                     # calculate the instantaneous speed
-                    self.hertz = 1000.0000 / self.pinDelta
-                    self.flow = self.hertz / (5 * 60) # L/s, This assumes a 1 liter per minute flow by the kegerator
-                    self.litersPoured += self.flow * (self.pinDelta / 1000.0000)
+                    self.hertz = self.scaleFactor / self.pinDelta
+                    logging.info('\n\tpindelta: %s, hertz: %s' % (self.pinDelta, self.hertz))
+
+                    self.flow = self.hertz / self.convFactor # L/s, This assumes a 1 liter per minute flow by the kegerator
+                    logging.info('\n\tflow: %s, conv. factor: %s' % (self.flow, self.convFactor))
+
+                    self.litersPoured += self.flow * (self.pinDelta / self.scaleFactor)
+                    logging.info('\n\tlitersPoured: %s' % self.litersPoured)
 
                     #TODO: emit data at a configured interval of poured beer
                     # such as every 2-3 oz.
@@ -211,7 +212,11 @@ class FlowMeter():
             if self.pouring == True and self.pinState == self.lastPinState and (currentTime - self.lastPinChange) > 3000:
                 # set pouring back to false to set up for the next pour capture
                 self.pouring = False
-                print 'liters poured: ', self.litersPoured
+                logging.info('\n\tliters poured: %s' % self.litersPoured)
+                # Until i can figure out the algorithm, we're going to scale the value by a factor of
+                # 55% since that is what it seems to be off by.
+                self.litersPoured = (self.litersPoured * 1.55)
+                logging.info('\n\tscaled liters poured: %s' % self.litersPoured)
 
                 self.ouncesPoured = self.litersPoured * 33.814 # we want to return ounces and this value is the constant to do so
                 # the 0.2 value is a bit arbitrary. when the flow meter gets jostled, the impeller can sometimes
@@ -235,8 +240,7 @@ class FlowMeter():
                         'pourend': datetime.now(pytz.timezone('America/Los_Angeles'))
                     }
 
-                    if DEBUG:
-                        print socketPourData, '\n volume is ounces \n duration is secs'
+                    logging.info('\n volume: %s oz\n duration: %s secs' % (socketPourData['volume'], socketPourData['duration']))
 
                     # Zero out the pour amount now that we've created an object to emit/post
                     self.litersPoured = 0
@@ -251,7 +255,7 @@ class FlowMeter():
 
                     except Exception as e:
                         #TODO: log error to database
-                        print e
+                        logging.error(e)
                         #self.tryAgainInaMinute()
 
             self.lastPinChange = self.pinChange
