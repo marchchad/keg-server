@@ -19,9 +19,9 @@ To do so, place the script at /etc/init.d/ and run the following commands:
 ```
 * **Register script for startup**
 ```
-    sudo update-rc.d NameOfYourScript defaults
+    sudo update-rc.d startupscript.sh defaults
 ```
 * **To remove the script from startup**
 ```
-    sudo update-rc.d -f  NameOfYourScript remove
+    sudo update-rc.d -f  startupscript.sh remove
 ```
