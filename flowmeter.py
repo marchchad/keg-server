@@ -199,7 +199,7 @@ class FlowMeter():
                 if self.pinDelta > 0 and self.pinDelta < 1000:
                     # calculate the instantaneous speed
                     self.hertz = 1000.0000 / self.pinDelta
-                    self.flow = self.hertz / (60 * 7.5) # L/s, This assumes a 1 liter per minute flow by the kegerator
+                    self.flow = self.hertz / (5 * 60) # L/s, This assumes a 1 liter per minute flow by the kegerator
                     self.litersPoured += self.flow * (self.pinDelta / 1000.0000)
 
                     #TODO: emit data at a configured interval of poured beer
@@ -211,6 +211,8 @@ class FlowMeter():
             if self.pouring == True and self.pinState == self.lastPinState and (currentTime - self.lastPinChange) > 3000:
                 # set pouring back to false to set up for the next pour capture
                 self.pouring = False
+                print 'liters poured: ', self.litersPoured
+
                 self.ouncesPoured = self.litersPoured * 33.814 # we want to return ounces and this value is the constant to do so
                 # the 0.2 value is a bit arbitrary. when the flow meter gets jostled, the impeller can sometimes
                 # trip the pin state, creating a 'false positive' read. This value helps to capture what are
