@@ -11,4 +11,9 @@
 #                    The information is then converted into fluid ounces and emitted over a socket connection and posted via http to an API to log the information.
 ### END INIT INFO
 
-python /home/pi/keg-server/test-python.py >> /home/pi/keg-server/flowmeter.log 2>&1
+if [ ! -f /home/pi/keg-server/flowmeter.log ];
+then
+    touch /home/pi/keg-server/flowmeter.log
+fi
+
+python /home/pi/keg-server/flowmeter.py >> /home/pi/keg-server/flowmeter.log 2>&1
