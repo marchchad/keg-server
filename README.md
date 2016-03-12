@@ -1,4 +1,4 @@
-# keg-server
+# Raspberry Pi Keg Server
 
 This repo contains a single python script used to monitor a GPIO pin on a raspberry pi.
 

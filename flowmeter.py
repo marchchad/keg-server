@@ -80,6 +80,15 @@ class FlowMeter():
         socket = SocketIO(self.targetHost, self.targetWsPort, LoggingNamespace)
         return socket
 
+    def emitPourStart(self):
+        try:
+            logging.info("\n\tEmitting pour start...")
+            self.socketIO.emit('pourStart', self.kegId)
+            logging.info("\n\tDone emitting pour start...")
+        except Exception as e:
+            logging.error("\n\tAn error occurred when emitting the pour data")
+            logging.error(e)
+
     def emitTotalPour(self, pourData):
         """
         Emits the pour data to the `emitTotalPourData event
@@ -97,7 +106,8 @@ class FlowMeter():
             # append new pour data to beginning of list
             self.lastFivePours = [pourData] + self.lastFivePours
         except Exception as e:
-            raise e
+            logging.error("\n\tAn error occurred when emitting the pour data")
+            logging.error(e)
 
     def postPourData(self, pourData):
         """
@@ -149,7 +159,7 @@ class FlowMeter():
         """
         Sets up the web socket connection, the raspberry pi board and pins, and starts the `main` method
         """
-        logging.basicConfig(level=logging.WARNING)
+        logging.basicConfig(level=logging.DEBUG)
         logging.info("\n\n\n") # pad the log a bit so we can see where the program restarted
 
         self.token = self.GetToken()
@@ -186,6 +196,7 @@ class FlowMeter():
                 if self.pouring == False:
                     self.startTime = currentTime
                     self.pourStart = datetime.now(pytz.timezone('America/Los_Angeles'))
+                    self.emitPourStart()
 
                 self.pouring = True
                 # get the current time
@@ -195,13 +206,13 @@ class FlowMeter():
                 if self.pinDelta > 0 and self.pinDelta < 1000:
                     # calculate the instantaneous speed
                     self.hertz = self.scaleFactor / self.pinDelta
-                    logging.info('\n\tpindelta: %s, hertz: %s' % (self.pinDelta, self.hertz))
+                    #logging.info('\n\tpindelta: %s, hertz: %s' % (self.pinDelta, self.hertz))
 
                     self.flow = self.hertz / self.convFactor # L/s, This assumes a 1 liter per minute flow by the kegerator
-                    logging.info('\n\tflow: %s, conv. factor: %s' % (self.flow, self.convFactor))
+                    #logging.info('\n\tflow: %s, conv. factor: %s' % (self.flow, self.convFactor))
 
                     self.litersPoured += self.flow * (self.pinDelta / self.scaleFactor)
-                    logging.info('\n\tlitersPoured: %s' % self.litersPoured)
+                    #logging.info('\n\tlitersPoured: %s' % self.litersPoured)
 
                     #TODO: emit data at a configured interval of poured beer
                     # such as every 2-3 oz.
