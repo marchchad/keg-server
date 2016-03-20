@@ -2,6 +2,7 @@
 
 This repo contains a single python script used to monitor a GPIO pin on a raspberry pi.
 
+To determine what GPIO pin you wish to use, review the [GPIO pin layout diagram](https://www.raspberrypi.org/documentation/usage/gpio-plus-and-raspi2/).
 
 A startup script is included that can be installed to start the flowmeter when the pi starts up.
 
