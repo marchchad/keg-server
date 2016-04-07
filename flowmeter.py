@@ -7,14 +7,31 @@ import RPi.GPIO as gpio
 import logging
 import requests
 import json
+import threading
 from socketIO_client import SocketIO, LoggingNamespace 	# To stream pouring data to the client page
 
 LOCAL = True # When False, flow meter will hook up to Live site for api authentication, data posting, and web socket streaming
 
 
-class FlowMeter():
+class FlowMeter(threading.Thread):
+    """
+    This class provides methods to post, stream, and log pour data read from a GPIO pin of a raspberry pi.
 
+    Parameters
+    ----------
+    kegid: Integer
+        The id of the keg that the flowmeter is reading data for.
+    pin: Integer
+        The id of the pin the flowmeter is transmitting the data through.
+    local<optional>: Boolean
+        A boolean designating whether or not the data is emitting to local or remote web services.
+    """
     def __init__(self, kegId, pin, local=True):
+        """
+            Some properties are declared as 0.0 so they are set to be floating point numbers instead of integers
+            as they need finer precision for some calculations.
+        """
+        super(FlowMeter, self).__init__()
         self.pin = pin
         self.kegId = kegId
         self.local = local
@@ -25,20 +42,17 @@ class FlowMeter():
         self.lastPinChange = int(time.time() * 1000)
         self.pourStart = 0
         self.pinChange = self.lastPinChange
-        self.pinDelta = 0
-        self.hertz = 0
-        self.flow = 0
-        self.litersPoured = 0
-        self.ouncesPoured = 0
+        self.litersPoured = 0.0
+        self.ouncesPoured = 0.0
+        self.totalDelta = 0.0
 
-        self.convFactor = (7.5 * 60)
-        self.scaleFactor = 1000.0000
+        self.pourRate = 24.0  # represents milliliters poured in a second
 
         # TODO: move values to a config that is excluded from repo 
         self.user = 'pi'
         self.password = 'raspberry'
 
-        if local:
+        if self.local:
             # local debugging
             self.targetHost = 'http://10.0.0.78'
             self.targetWsPort = 3000
@@ -52,6 +66,9 @@ class FlowMeter():
             self.PostPourUrl = '%s/api/pour' % self.targetHost
 
         self.lastFivePours = []
+
+    def run(self):
+        self.startup()
 
     def GetToken(self):
         """
@@ -89,9 +106,27 @@ class FlowMeter():
             logging.error("\n\tAn error occurred when emitting the pour data")
             logging.error(e)
 
+    def emitPourInterval(self, volume):
+        """
+        Emits the pour data on a configurable ounce basis.
+
+        Parameters
+        ----------
+        volume: Float
+            The amount in ounces that have poured thus far.
+        """
+        try:
+            logging.info("\n\tEmitting pour start...")
+            self.socketIO.emit('pourInterval', self.kegId, volume)
+            logging.info("\n\tDone emitting pour start...")
+        except Exception as e:
+            logging.error("\n\tAn error occurred when emitting the pour data")
+            logging.error(e)
+
+
     def emitTotalPour(self, pourData):
         """
-        Emits the pour data to the `emitTotalPourData event
+        Emits the pour data to the `emitTotalPourData` event
 
         :param pourData: Object containing the keg id, volume, and pour duration
         """
@@ -196,26 +231,24 @@ class FlowMeter():
                 if self.pouring == False:
                     self.startTime = currentTime
                     self.pourStart = datetime.now(pytz.timezone('America/Los_Angeles'))
+                    self.totalDelta = 0.0
                     self.emitPourStart()
 
                 self.pouring = True
                 # get the current time
                 self.pinChange = currentTime
-                self.pinDelta = self.pinChange - self.lastPinChange
+                pinDelta = self.pinChange - self.lastPinChange
 
-                if self.pinDelta > 0 and self.pinDelta < 1000:
-                    # calculate the instantaneous speed
-                    self.hertz = self.scaleFactor / self.pinDelta
-                    #logging.info('\n\tpindelta: %s, hertz: %s' % (self.pinDelta, self.hertz))
-
-                    self.flow = self.hertz / self.convFactor # L/s, This assumes a 1 liter per minute flow by the kegerator
-                    #logging.info('\n\tflow: %s, conv. factor: %s' % (self.flow, self.convFactor))
-
-                    self.litersPoured += self.flow * (self.pinDelta / self.scaleFactor)
-                    #logging.info('\n\tlitersPoured: %s' % self.litersPoured)
+                #TODO: I wonder why 1000 was chosen as an upper limit...
+                if pinDelta > 0 and pinDelta < 1000:
+                    # Total the time captured between each read
+                    self.totalDelta += float(pinDelta)
 
                     #TODO: emit data at a configured interval of poured beer
                     # such as every 2-3 oz.
+                    volume = ((self.totalDelta / 1000) * (self.pourRate / 1000)) * 33.814
+                    if int(volume) % 2:
+                        self.emitPourInterval(volume)
 
             # if pouring was set to true, and the pin hasn't changed state and there hasn't been a change in
             # the pin in over 3 seconds, we can assume pouring has ceased so we'll post the data and reset
@@ -223,32 +256,34 @@ class FlowMeter():
             if self.pouring == True and self.pinState == self.lastPinState and (currentTime - self.lastPinChange) > 3000:
                 # set pouring back to false to set up for the next pour capture
                 self.pouring = False
-                logging.info('\n\tliters poured: %s' % self.litersPoured)
-                # Until i can figure out the algorithm, we're going to scale the value by a factor of
-                # 55% since that is what it seems to be off by.
-                self.litersPoured = (self.litersPoured * 1.55)
-                logging.info('\n\tscaled liters poured: %s' % self.litersPoured)
 
-                self.ouncesPoured = self.litersPoured * 33.814 # we want to return ounces and this value is the constant to do so
+                # derive pour time in seconds by subtracting the current time from the start time
+                # and unraveling the precision we added earlier
+                pourTime = self.totalDelta / 1000
+
+                self.litersPoured = (pourTime * self.pourRate) / 1000  # divide by 1000 to convert milliliters into liters
+
+                self.ouncesPoured = self.litersPoured * 33.814
+
+                # we want to return ounces and this value is the constant to do so
                 # the 0.2 value is a bit arbitrary. when the flow meter gets jostled, the impeller can sometimes
                 # trip the pin state, creating a 'false positive' read. This value helps to capture what are
                 # only what are perceived to be legit pours.
                 if self.ouncesPoured > 0.2:
-                    # derive pour time in seconds by subtracting the current time from the start time
-                    # and unraveling the precision we added earlier
-                    pourTime = float(currentTime - self.startTime) / 1000
 
                     socketPourData = {
                         'kegid': self.kegId,
                         'volume': self.ouncesPoured,
                         'duration': pourTime
                     }
+                    pourEnd = datetime.now(pytz.timezone('America/Los_Angeles'))
 
                     postPourData = {
                         'kegid': self.kegId,
                         'volume': self.ouncesPoured,
                         'pourstart': self.pourStart,
-                        'pourend': datetime.now(pytz.timezone('America/Los_Angeles'))
+                        'pourend': pourEnd,
+                        'duration': pourTime
                     }
 
                     logging.info('\n volume: %s oz\n duration: %s secs' % (socketPourData['volume'], socketPourData['duration']))
@@ -272,5 +307,12 @@ class FlowMeter():
             self.lastPinChange = self.pinChange
             self.lastPinState = self.pinState
 
-fm1 = FlowMeter(1, 4, LOCAL)
-fm1.startup()
+
+try:
+    fm1 = FlowMeter(1, 4, LOCAL)
+
+    fm2 = FlowMeter(2, 27, LOCAL)
+    fm1.start()
+    fm2.start()
+except Exception as e:
+    print e

@@ -2,10 +2,10 @@
 
 This repo contains a single python script used to monitor a GPIO pin on a raspberry pi.
 
+This server script interfaces with an API provided by [chadmarchpdx](https://github.com/marchchad/chadmarchpdx) where the data is stored and visualized.
+
 
 A startup script is included that can be installed to start the flowmeter when the pi starts up.
-
-
 To do so, place the script at /etc/init.d/ and run the following commands:
 
 
