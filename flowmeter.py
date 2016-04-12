@@ -247,8 +247,8 @@ class FlowMeter(threading.Thread):
                     #TODO: emit data at a configured interval of poured beer
                     # such as every 2-3 oz.
                     volume = ((self.totalDelta / 1000) * (self.pourRate / 1000)) * 33.814
-                    if int(volume) % 2:
-                        self.emitPourInterval(volume)
+                    # if int(volume) % 2:
+                    #     self.emitPourInterval(volume)
 
             # if pouring was set to true, and the pin hasn't changed state and there hasn't been a change in
             # the pin in over 3 seconds, we can assume pouring has ceased so we'll post the data and reset
@@ -307,10 +307,8 @@ class FlowMeter(threading.Thread):
             self.lastPinChange = self.pinChange
             self.lastPinState = self.pinState
 
-
 try:
     fm1 = FlowMeter(1, 4, LOCAL)
-
     fm2 = FlowMeter(2, 27, LOCAL)
     fm1.start()
     fm2.start()
