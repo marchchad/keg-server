@@ -1,0 +1,3 @@
+requests
+numpy=1.13.3
+RPi.GPIO=0.63

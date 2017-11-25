@@ -26,3 +26,11 @@ To do so, place the script at /etc/init.d/ and run the following commands:
 ```
     sudo update-rc.d -f  startupscript.sh remove
 ```
+
+### Temperature Monitor
+
+The `w1-gpio` module assumes that the probes are connected to the GPIO 4 pin along with a 4.7k or 10k ohm resistor
+between the `3.3v` and GPIO 4 pin.
+
+The limit on the number of probes that can be run in parallel on the single GPIO pin is rather high, some reporting
+upwards of 70, however your mileage may vary.

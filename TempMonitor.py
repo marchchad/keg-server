@@ -1,18 +1,16 @@
 import time
-import os
 import glob
 # Once we get a DB set up, we'll activate this
-#import mysql.connector 	# To save data locally in the event we can't post or need to recover/reset data
+# import mysql.connector  # To save data locally in the event we can't post or need to recover/reset data
 import logging
 import requests
 import json
 import threading
 from socketIO_client import SocketIO, LoggingNamespace 	# To stream pouring data to the client page
 
-LOCAL = True # When False, flow meter will hook up to Live site for api authentication, data posting, and web socket streaming
+# When False, temp probe will connect to live site for api authentication, data posting, and web socket streaming
+DEBUG = True
 
-os.system('modprobe w1-gpio')
-os.system('modprobe w1-therm')
 
 class TempMonitor(threading.Thread):
     """
@@ -20,26 +18,26 @@ class TempMonitor(threading.Thread):
 
     Parameters
     ----------
-    pin: Integer
-        The id of the pin the flowmeter is transmitting the data through.
+    device_file_id: Integer
+        The id of the temperature probe is transmitting the data through.
     local<optional>: Boolean
         A boolean designating whether or not the data is emitting to local or remote web services.
     """
-    def __init__(self, device, local=True):
+    def __init__(self, device_file_id, debug=True):
         """
             Some properties are declared as 0.0 so they are set to be floating point numbers instead of integers
             as they need finer precision for some calculations.
         """
         super(TempMonitor, self).__init__()
-        self.local = local
-        self.deviceId = device[-4:]
-        self.device_file = device + '/w1_slave'
+        self.debug = debug
+        self.deviceId = device_file_id[-4:]
+        self.device_file = device_file_id + '/w1_slave'
 
         # TODO: move values to a config that is excluded from repo
         self.user = 'pi'
         self.password = 'raspberry'
 
-        if self.local:
+        if self.debug:
             # local debugging
             self.targetHost = 'http://10.0.0.78'
             self.targetWsPort = 3000
@@ -47,7 +45,7 @@ class TempMonitor(threading.Thread):
             self.PostTemperatureUrl = '%s:%s/api/temperature' % (self.targetHost, self.targetWsPort)
         else:
             # live site
-            self.targetHost = 'http://www.chadmarchpdx.com'
+            self.targetHost = 'https://www.chadmarchpdx.com'
             self.targetWsPort = 8000
             self.AuthenticationUrl = "%s/api/authenticate" % self.targetHost
             self.PostTemperatureUrl = '%s/api/temperature' % self.targetHost
@@ -55,7 +53,7 @@ class TempMonitor(threading.Thread):
     def run(self):
         self.startup()
 
-    def GetToken(self):
+    def get_token(self):
         """
         Gets a JSON Web Token used to authenticate our POSTs to the API
         # TODO: reauthorize every 24 hours at 3 A.M. since the auth token only lasts that long
@@ -69,7 +67,7 @@ class TempMonitor(threading.Thread):
         else:
             raise "Unauthorized! Please check the username and password."
 
-    def GetSocketConnection(self):
+    def get_socket_connection(self):
         """
         Creates a web socket connection to target host
 
@@ -82,8 +80,7 @@ class TempMonitor(threading.Thread):
         socket = SocketIO(self.targetHost, self.targetWsPort, LoggingNamespace)
         return socket
 
-
-    def emitTemperature(self, tempData):
+    def emit_temperature(self, tempData):
         """
         Emits the pour data to the `emitTotalPourData` event
 
@@ -97,22 +94,22 @@ class TempMonitor(threading.Thread):
             logging.error("\n\tAn error occurred when emitting the temperature data")
             logging.error(e)
 
-    def postTempData(self, tempData):
+    def post_temperature_data(self, temp_data):
         """
         Posts the pour data to the server.
 
-        :param tempData: Object containing the temperature data
+        :param temp_data: Object containing the temperature data
         """
         logging.info("\n\tposturl: %s" % self.PostTemperatureUrl)
 
         # Must mixin the auth token in order to post the data
-        tempData['token'] = self.token
+        temp_data['token'] = self.token
 
-        response = requests.post(self.PostTemperatureUrl, data=tempData)
+        response = requests.post(self.PostTemperatureUrl, data=temp_data)
         data = json.loads(response.text)
 
         # No need to keep the latest pour if it posted successfully
-        if data['success'] == True:
+        if data['success']:
             if data['message']:
                 logging.info("\n\t%s" % data['message'])
             else:
@@ -126,22 +123,20 @@ class TempMonitor(threading.Thread):
             #TODO: log temperature data to local database
             pass
 
-
     def startup(self):
         """
         Sets up the web socket connection, the raspberry pi board and pins, and starts the `main` method
         """
         logging.basicConfig(level=logging.WARNING)
-        logging.info("\n\n\n") # pad the log a bit so we can see where the program restarted
+        logging.info("\n\n\n")  # pad the log a bit so we can see where the program restarted
 
-        #self.token = self.GetToken()
+        # self.token = self.get_token()
         # set up connection
-        #self.socketIO = self.GetSocketConnection()
+        # self.socketIO = self.get_socket_connection()
 
         logging.info("\n\twe're monitoring temperature!")
 
         self.main()
-
 
     def read_temp_raw(self):
         """
@@ -153,7 +148,6 @@ class TempMonitor(threading.Thread):
         f.close()
         return lines
 
-
     def main(self):
         """
         Endless loop that parses local files written by temperature probes then posts
@@ -161,7 +155,6 @@ class TempMonitor(threading.Thread):
         """
         # We want this to constantly monitor the temperature files, so start an infinite loop
         while True:
-            currentTime = time.time()
             lines = self.read_temp_raw()
             while lines[0].strip()[-3:] != 'YES':
                 time.sleep(0.2)
@@ -175,10 +168,23 @@ class TempMonitor(threading.Thread):
                 # TODO: emit, post data here.
             time.sleep(.5)
 
+
 try:
     basepath = '/sys/bus/w1/devices/'
-    for device in glob.glob(basepath + '28*'):
-        tm = TempMonitor(device, LOCAL)
-        tm.start()
+
+    # The concatenated string will ensure to only list the device folders
+    # and exclude the `w1_bus_master` directory
+    device_dirs = glob.glob(basepath + '28*')
+
+    if len(device_dirs) == 0:
+        raise Exception("No devices found")
+
+    for device_file in device_dirs:
+        tm = TempMonitor(device_file, DEBUG)
+        # Since the TempMonitor class utilizes an endless loop, it's important we start each main method
+        # in its own thread, otherwise only the first device will ever be setup and read.
+        thread = threading.Thread(target=tm.startup)
+        thread.start()
+
 except Exception as e:
     print e
