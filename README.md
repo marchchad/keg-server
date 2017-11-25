@@ -34,3 +34,5 @@ between the `3.3v` and GPIO 4 pin.
 
 The limit on the number of probes that can be run in parallel on the single GPIO pin is rather high, some reporting
 upwards of 70, however your mileage may vary.
+
+Note: Not sure why, but I cannot get any POSTs to work from the raspberry pi to a server on the LAN.

@@ -6,6 +6,7 @@ import logging
 import requests
 import json
 import threading
+import datetime
 from socketIO_client import SocketIO, LoggingNamespace 	# To stream pouring data to the client page
 
 # this holds configuration information for the services to connect to.
@@ -23,10 +24,12 @@ class TempMonitor(threading.Thread):
     ----------
     device_file_id: Integer
         The id of the temperature probe is transmitting the data through.
-    local<optional>: Boolean
+    read_interval<optional>: Integer
+        Time in seconds in which the probe will be read and reported.
+    debug<optional>: Boolean
         A boolean designating whether or not the data is emitting to local or remote web services.
     """
-    def __init__(self, device_file_id, debug=True):
+    def __init__(self, device_file_id, read_interval=300, debug=True):
         """
             Some properties are declared as 0.0 so they are set to be floating point numbers instead of integers
             as they need finer precision for some calculations.
@@ -35,6 +38,7 @@ class TempMonitor(threading.Thread):
         self.debug = debug
         self.deviceId = device_file_id[-4:]
         self.device_file = device_file_id + '/w1_slave'
+        self.read_interval = read_interval
 
         self.user = settings.USER
         self.password = settings.PASSWORD
@@ -42,7 +46,7 @@ class TempMonitor(threading.Thread):
 
         self.target_host = settings.TARGET_HOST
         self.AuthenticationUrl = '%s/api-auth-token/' % self.target_host
-        self.PostTemperatureUrl = '%s/api/temperature/' % self.target_host
+        self.PostTemperatureUrl = '%s/temperatures/' % self.target_host
 
     def run(self):
         self.startup()
@@ -91,23 +95,20 @@ class TempMonitor(threading.Thread):
             raise Exception("Unauthorized! Cannot post temperature data. Please check the username and password.")
 
         # Must mixin the auth token in order to post the data
-        headers = {'Authorization': 'Token: %s' % self.token}
+        headers = {'Authorization': 'Token %s' % self.token}
 
         response = requests.post(self.PostTemperatureUrl, headers=headers, data=temp_data)
         data = json.loads(response.text)
-
+        success = False
         # No need to keep the latest pour if it posted successfully
-        if data['success']:
-            if data['message']:
-                logging.info("\n\t%s" % data['message'])
-            else:
-                logging.info("\n\tSuccessfully posted temperature data!")
+        if 'id' in data:
+            success = True
+            logging.info("\n\tSuccessfully posted temperature data!")
         else:
-            if data['message']:
-                logging.warning("\n\tThe post was not successful.")
-                logging.warning("\n\t%s" % data['message'])
-            else:
-                logging.error("\n\tSomething went wrong.")
+
+            logging.warning("\n\tThe post was not successful.")
+
+            logging.error("\n\tSomething went wrong.")
             # TODO: log temperature data to local database
             pass
 
@@ -141,6 +142,7 @@ class TempMonitor(threading.Thread):
         """
         # We want this to constantly monitor the temperature files, so start an infinite loop
         while True:
+            time.sleep(self.read_interval)
             lines = self.read_temp_raw()
             while lines[0].strip()[-3:] != 'YES':
                 time.sleep(0.2)
@@ -151,8 +153,8 @@ class TempMonitor(threading.Thread):
                 temp_c = float(temp_string) / 1000.0
                 temp_f = temp_c * 9.0 / 5.0 + 32.0
                 print self.deviceId + " is reading at " + str(temp_f) + " deg F"
-                # TODO: emit, post data here.
-            time.sleep(.5)
+                self.post_temperature_data({"name": self.deviceId, "temperature": temp_f, "created_on": str(datetime.datetime.now())})
+
 
 
 try:
@@ -166,7 +168,7 @@ try:
         raise Exception("No devices found")
 
     for device_file in device_dirs:
-        tm = TempMonitor(device_file, DEBUG)
+        tm = TempMonitor(device_file)
         # Since the TempMonitor class utilizes an endless loop, it's important we start each main method
         # in its own thread, otherwise only the first device will ever be setup and read.
         thread = threading.Thread(target=tm.startup)
