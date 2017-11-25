@@ -8,6 +8,9 @@ import json
 import threading
 from socketIO_client import SocketIO, LoggingNamespace 	# To stream pouring data to the client page
 
+# this holds configuration information for the services to connect to.
+import settings
+
 # When False, temp probe will connect to live site for api authentication, data posting, and web socket streaming
 DEBUG = True
 
@@ -33,22 +36,13 @@ class TempMonitor(threading.Thread):
         self.deviceId = device_file_id[-4:]
         self.device_file = device_file_id + '/w1_slave'
 
-        # TODO: move values to a config that is excluded from repo
-        self.user = 'pi'
-        self.password = 'raspberry'
+        self.user = settings.USER
+        self.password = settings.PASSWORD
+        self.token = None
 
-        if self.debug:
-            # local debugging
-            self.targetHost = 'http://10.0.0.78'
-            self.targetWsPort = 3000
-            self.AuthenticationUrl = '%s:%s/api/authenticate' % (self.targetHost, self.targetWsPort)
-            self.PostTemperatureUrl = '%s:%s/api/temperature' % (self.targetHost, self.targetWsPort)
-        else:
-            # live site
-            self.targetHost = 'https://www.chadmarchpdx.com'
-            self.targetWsPort = 8000
-            self.AuthenticationUrl = "%s/api/authenticate" % self.targetHost
-            self.PostTemperatureUrl = '%s/api/temperature' % self.targetHost
+        self.target_host = settings.TARGET_HOST
+        self.AuthenticationUrl = '%s/api-auth-token/' % self.target_host
+        self.PostTemperatureUrl = '%s/api/temperature/' % self.target_host
 
     def run(self):
         self.startup()
@@ -56,43 +50,32 @@ class TempMonitor(threading.Thread):
     def get_token(self):
         """
         Gets a JSON Web Token used to authenticate our POSTs to the API
-        # TODO: reauthorize every 24 hours at 3 A.M. since the auth token only lasts that long
         """
         logging.info("\n\tauth url: %s" % self.AuthenticationUrl)
-        response = requests.post(self.AuthenticationUrl, data={'username': self.user, 'password': self.password })
-        data = json.loads(response.text)
-        if data['success'] is True:
-            logging.info("\n\tSuccessfully generated token!")
-            return data['token']
-        else:
-            raise "Unauthorized! Please check the username and password."
 
-    def get_socket_connection(self):
-        """
-        Creates a web socket connection to target host
-
-        :rtype: Socket connection
-        """
-        logging.info("\n\tGetting socket connection...")
-        # only log if we're running against the local instance
-        logging.getLogger('requests').setLevel(logging.WARNING)
-
-        socket = SocketIO(self.targetHost, self.targetWsPort, LoggingNamespace)
-        return socket
-
-    def emit_temperature(self, tempData):
-        """
-        Emits the pour data to the `emitTotalPourData` event
-
-        :param tempData: Object containing the keg id, volume, and pour duration
-        """
+        login_data = {"username": self.user, "password": self.password}
+        response = None
         try:
-            logging.info("\n\tEmitting data...")
-            self.socketIO.emit('emitTempData', tempData)
-            logging.info("\n\tDone emitting data...")
-        except Exception as e:
-            logging.error("\n\tAn error occurred when emitting the temperature data")
-            logging.error(e)
+            response = requests.post(self.AuthenticationUrl, json=login_data)
+
+            data = json.loads(response.text)
+
+            if 'token' in data:
+                logging.info("\n\tSuccessfully retrieved token!")
+                return data['token']
+            else:
+
+                # TODO: log to a local db instead of just erroring out.
+                raise Exception("Unauthorized! Please check the username and password.")
+
+        except requests.exceptions.ConnectionError as e:
+            print "No response\n\n", e
+
+            if response is not None:
+                try:
+                    response.close()
+                except:
+                    pass
 
     def post_temperature_data(self, temp_data):
         """
@@ -102,10 +85,15 @@ class TempMonitor(threading.Thread):
         """
         logging.info("\n\tposturl: %s" % self.PostTemperatureUrl)
 
-        # Must mixin the auth token in order to post the data
-        temp_data['token'] = self.token
+        if self.token is None:
 
-        response = requests.post(self.PostTemperatureUrl, data=temp_data)
+            # TODO: log to a local db instead of just erroring out.
+            raise Exception("Unauthorized! Cannot post temperature data. Please check the username and password.")
+
+        # Must mixin the auth token in order to post the data
+        headers = {'Authorization': 'Token: %s' % self.token}
+
+        response = requests.post(self.PostTemperatureUrl, headers=headers, data=temp_data)
         data = json.loads(response.text)
 
         # No need to keep the latest pour if it posted successfully
@@ -120,7 +108,7 @@ class TempMonitor(threading.Thread):
                 logging.warning("\n\t%s" % data['message'])
             else:
                 logging.error("\n\tSomething went wrong.")
-            #TODO: log temperature data to local database
+            # TODO: log temperature data to local database
             pass
 
     def startup(self):
@@ -130,9 +118,7 @@ class TempMonitor(threading.Thread):
         logging.basicConfig(level=logging.WARNING)
         logging.info("\n\n\n")  # pad the log a bit so we can see where the program restarted
 
-        # self.token = self.get_token()
-        # set up connection
-        # self.socketIO = self.get_socket_connection()
+        self.token = self.get_token()
 
         logging.info("\n\twe're monitoring temperature!")
 
